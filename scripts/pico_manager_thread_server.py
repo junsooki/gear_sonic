@@ -824,6 +824,7 @@ def _pose_stream_common(
     with_g1_robot: bool = True,
     enable_waist_tracking: bool = False,
     enable_smpl_vis: bool = False,
+    auto_vr3pt: bool = False,
 ):
     """Shared pose streaming loop used by run_pico."""
     if xrt is None:
@@ -1818,6 +1819,7 @@ def run_pico_manager(
     with_g1_robot: bool = True,
     enable_waist_tracking: bool = False,
     enable_smpl_vis: bool = False,
+    auto_vr3pt: bool = False,
 ):
     """
     Manager: creates shared PUB socket and runs pose/planner streamers based on current mode.
@@ -1971,6 +1973,13 @@ def run_pico_manager(
                 elif ax_pressed and not prev_ax_pressed:
                     new_mode = StreamMode.POSE
                 elif left_axis_click and not prev_left_axis_click:
+                    new_mode = StreamMode.PLANNER_VR_3PT
+                elif auto_vr3pt:
+                    # Whole-body mode is otherwise reachable ONLY by clicking
+                    # the left stick, and get_axis_clicks() silently returns
+                    # False on SDK builds without that method — which leaves
+                    # no way in at all.  Advance automatically instead.
+                    print("[Manager] auto_vr3pt: entering VR_3PT (whole-body tracking)")
                     new_mode = StreamMode.PLANNER_VR_3PT
 
             elif current_mode == StreamMode.POSE:
@@ -2168,6 +2177,14 @@ if __name__ == "__main__":
         action="store_true",
         help="Enable SMPL body joint visualization (24 joint spheres) in the VR3pt viewer",
     )
+    parser.add_argument(
+        "--auto_vr3pt",
+        action="store_true",
+        help="Enter VR_3PT (whole-body head+hands tracking) automatically after "
+             "engaging, instead of requiring a left-stick click that some "
+             "XRoboToolkit SDK builds do not expose.",
+    )
+
     args = parser.parse_args()
 
     # Standalone VR3Pt test modes (exit after finishing)
@@ -2208,6 +2225,7 @@ if __name__ == "__main__":
             with_g1_robot=with_g1_robot,
             enable_waist_tracking=args.waist_tracking,
             enable_smpl_vis=args.vis_smpl,
+            auto_vr3pt=args.auto_vr3pt,
         )
     else:
         # Run legacy single-thread pose streaming
