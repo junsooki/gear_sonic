@@ -1642,6 +1642,7 @@ class PlannerStreamer:
         self.mode = LocomotionMode.IDLE
         self.prev_ab = False
         self.prev_xy = False
+        self.prev_engage = False
         # Persistent facing buffer (unit vector on XY plane)
         self.yaw_accumulator = YawAccumulator()
         self.last_send = time.time()
@@ -1699,6 +1700,20 @@ class PlannerStreamer:
                 print(f"[PlannerLoop] Mode -> {self.mode.value}: {self.mode.name}")
             self.prev_ab = ab_now
             self.prev_xy = xy_now
+
+            # Engage chord, matching teleop_decoupled's "start teleoperation":
+            # Left Menu + Right Trigger toggles IDLE <-> WALK (rising edge).
+            # A+B / X+Y mode stepping above still works for the other gaits.
+            menu_l, _lt, engage_rt, _lg, _rg = get_controller_inputs()
+            engage_now = bool(menu_l) and float(engage_rt) > 0.5
+            if engage_now and not self.prev_engage:
+                self.mode = (
+                    LocomotionMode.WALK
+                    if self.mode == LocomotionMode.IDLE
+                    else LocomotionMode.IDLE
+                )
+                print(f"[PlannerLoop] Engage chord -> {self.mode.value}: {self.mode.name}")
+            self.prev_engage = engage_now
 
             # Read axes/joysticks to control movement, facing, speed and mode
             lx, ly, rx, ry = get_controller_axes()
@@ -1764,6 +1779,12 @@ class PlannerStreamer:
                     left_grip,
                     right_grip,
                 ) = get_controller_inputs()
+                if left_menu_button:
+                    # While the engage chord is held, don't drive the hands
+                    # from triggers (same suppression as teleop_decoupled's
+                    # pico_streamer) — otherwise engaging clenches a fist.
+                    left_trigger = right_trigger = 0.0
+                    left_grip = right_grip = 0.0
                 lh_joints, rh_joints = compute_hand_joints_from_inputs(
                     self.left_hand_ik_solver,
                     self.right_hand_ik_solver,
