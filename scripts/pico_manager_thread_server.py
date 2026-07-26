@@ -2064,7 +2064,15 @@ def run_pico_manager(
             if new_mode != current_mode:
                 if new_mode == StreamMode.OFF:
                     socket.send(build_command_message(start=False, stop=True, planner=True))
-                    exit()
+                    # Do NOT exit.  A+B+X+Y is the same chord as engage, and
+                    # the four buttons rarely land together — the gait
+                    # stepper sees A+B and X+Y separately, so a slightly
+                    # sloppy press stops the session.  Killing the process
+                    # made that unrecoverable: the operator saw "policy NOT
+                    # ENGAGED" forever with no way back short of relaunching
+                    # the whole stack.  Stay in OFF instead, so the next
+                    # A+B+X+Y engages again.
+                    print("[Manager] STOPPED (A+B+X+Y). Press A+B+X+Y again to re-engage.")
                 elif (
                     new_mode == StreamMode.PLANNER
                     or new_mode == StreamMode.PLANNER_FROZEN_UPPER_BODY
