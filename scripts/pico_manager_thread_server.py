@@ -1820,6 +1820,7 @@ def run_pico_manager(
     enable_waist_tracking: bool = False,
     enable_smpl_vis: bool = False,
     auto_vr3pt: bool = False,
+    auto_pose: bool = False,
 ):
     """
     Manager: creates shared PUB socket and runs pose/planner streamers based on current mode.
@@ -1957,7 +1958,6 @@ def run_pico_manager(
                 new_mode = StreamMode.PLANNER
             if current_mode == StreamMode.OFF:
                 if start_combo and not prev_start_combo:
-                    new_mode = StreamMode.PLANNER
                     # Calibrate VR 3pt tracking NOW: operator should be in zero-ref pose.
                     # Uses the current Pico SMPL frame + FK of all-zero body joints.
                     sample = reader.get_latest()
@@ -1965,6 +1965,16 @@ def run_pico_manager(
                         three_point.calibrate_now(sample["body_poses_np"])
                     else:
                         print("[Manager] WARNING: No SMPL data available for calibration")
+                    # POSE is the whole-body path (smpl encoder): body motion maps
+                    # onto the robot.  PLANNER is sticks-only — the DWBC-like mode.
+                    # auto_pose lands on POSE after the same CALIB_FULL, so the
+                    # operator does not have to remember A+X.
+                    if auto_pose:
+                        print("[Manager] auto_pose: engaging directly into POSE "
+                              "(full-body SMPL teleop)")
+                        new_mode = StreamMode.POSE
+                    else:
+                        new_mode = StreamMode.PLANNER
 
             elif current_mode == StreamMode.PLANNER:
                 # Chain 2: POSE <--(ax)--> PLANNER <--(left_axis_click)--> VR_3PT
@@ -2192,6 +2202,13 @@ if __name__ == "__main__":
              "engaging, instead of requiring a left-stick click that some "
              "XRoboToolkit SDK builds do not expose.",
     )
+    parser.add_argument(
+        "--auto_pose",
+        action="store_true",
+        help="Engage directly into POSE (full-body SMPL teleop) instead of "
+             "PLANNER. Same CALIB_FULL on A+B+X+Y; skips the extra A+X. "
+             "This is the mode where the operator's body maps onto the robot.",
+    )
 
     args = parser.parse_args()
 
@@ -2234,6 +2251,7 @@ if __name__ == "__main__":
             enable_waist_tracking=args.waist_tracking,
             enable_smpl_vis=args.vis_smpl,
             auto_vr3pt=args.auto_vr3pt,
+            auto_pose=args.auto_pose,
         )
     else:
         # Run legacy single-thread pose streaming
