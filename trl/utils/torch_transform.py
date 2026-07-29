@@ -591,11 +591,18 @@ def batch_compute_similarity_transform_torch(S1, S2):
 
 human_joints_info = None
 
+# Resolve the SMPL rest-pose data relative to THIS file, not the process CWD.
+# The manager launches from the repo root, so the old CWD-relative default missed
+# this file and POSE threw FileNotFoundError on every frame.
+_HUMAN_JOINTS_INFO_PATH = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data", "human", "human_joints_info.pkl")
+)
+
 
 def compute_human_joints(
     body_pose,
     global_orient,
-    human_joints_info_path="gear_sonic/data/human/human_joints_info.pkl",
+    human_joints_info_path=_HUMAN_JOINTS_INFO_PATH,
     use_thumb_joints=True,
 ):
     """
