@@ -1253,6 +1253,7 @@ class PoseStreamer:
             True  # Start with buffer cleared - wait for full buffer before first send
         )
         self.yaw_accumulator = YawAccumulator()
+        self._last_packed = None  # last POSE message, for keep-alive republish
 
     def reset_yaw(self):
         """Called when entering pose mode. Resets yaw only.
@@ -1269,12 +1270,25 @@ class PoseStreamer:
         self.buffer_cleared = True
         self.step = 0
 
+    def _keepalive(self):
+        # No fresh body frame: republish the last POSE at the target rate so the
+        # stream (and thus engagement) stays alive instead of disengaging/freezing.
+        last = getattr(self, "_last_packed", None)
+        if last is None:
+            time.sleep(0.005)
+            return
+        if time.time() - self.frame_start < self.frame_time:
+            time.sleep(0.001)
+            return
+        self.socket.send(last)
+        self.frame_start = time.time()
+
     def run_once(self):
         """Execute one iteration of the pose streaming loop."""
         sample = self.reader.get_latest()
 
         if sample is None:
-            time.sleep(0.005)
+            self._keepalive()
             return
 
         latest_data = compute_from_body_poses(
@@ -1325,6 +1339,7 @@ class PoseStreamer:
             self.next_target_ns = curr_stamp_ns
             return
         if curr_stamp_ns <= self.prev_stamp_ns:
+            self._keepalive()
             return
         if self.next_target_ns is None:
             self.next_target_ns = self.prev_stamp_ns + step_ns
@@ -1472,6 +1487,7 @@ class PoseStreamer:
 
             packed_message = pack_pose_message(numpy_data, topic="pose")
             self.socket.send(packed_message)
+            self._last_packed = packed_message
 
             if self.record_dir:
                 out_path = os.path.join(self.record_dir, f"pose_{self.record_idx:06d}.npz")
@@ -2102,7 +2118,10 @@ def run_pico_manager(
 
             # Run one iteration of the new mode
             if new_mode == StreamMode.POSE:
-                pose_streamer.run_once()
+                try:
+                    pose_streamer.run_once()
+                except Exception as _e:
+                    print(f"[Manager] POSE frame skipped ({type(_e).__name__}: {_e})", flush=True)
             elif (
                 new_mode == StreamMode.PLANNER
                 or new_mode == StreamMode.PLANNER_FROZEN_UPPER_BODY
