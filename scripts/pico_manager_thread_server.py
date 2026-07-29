@@ -756,6 +756,7 @@ class PicoReader:
         self._last_stamp_ns = None
         self._latest = None
         self._lock = threading.Lock()
+        self._n_fresh = self._n_unavail = self._n_samestamp = 0
 
     def start(self):
         self._thread.start()
@@ -771,12 +772,19 @@ class PicoReader:
     def _run(self):
         last_report = time.time()
         while not self._stop.is_set():
+            _now = time.time()
+            if _now - last_report >= 1.0:
+                print(f"[PicoReader] health: fresh={self._n_fresh} unavail={self._n_unavail} samestamp={self._n_samestamp} fps={self._fps_ema:.1f}", flush=True)
+                self._n_fresh = self._n_unavail = self._n_samestamp = 0
+                last_report = _now
             if not xrt.is_body_data_available():
+                self._n_unavail += 1
                 time.sleep(0.001)
                 continue
             stamp_ns = xrt.get_time_stamp_ns()
             prev_stamp_ns = self._last_stamp_ns
             if prev_stamp_ns is not None and stamp_ns == prev_stamp_ns:
+                self._n_samestamp += 1
                 time.sleep(0.000001)
                 continue
             # Compute device-based dt/fps using timestamp deltas (ns -> s)
@@ -800,14 +808,9 @@ class PicoReader:
                 }
                 with self._lock:
                     self._latest = sample
-                now = time.time()
-                if now - last_report >= 5.0:
-                    print(
-                        f"[PicoReader] dt_ts: {device_dt*1000.0:.2f} ms, fps: {self._fps_ema:.2f}"
-                    )
-                    last_report = now
+                self._n_fresh += 1
             except Exception as e:
-                print(f"[PicoReader] read error: {e}")
+                print(f"[PicoReader] read error: {e}", flush=True)
 
 
 def _pose_stream_common(
@@ -1253,6 +1256,7 @@ class PoseStreamer:
             True  # Start with buffer cleared - wait for full buffer before first send
         )
         self.yaw_accumulator = YawAccumulator()
+        self._last_packed = None  # last POSE message, for keep-alive republish
 
     def reset_yaw(self):
         """Called when entering pose mode. Resets yaw only.
@@ -1269,17 +1273,32 @@ class PoseStreamer:
         self.buffer_cleared = True
         self.step = 0
 
+    def _keepalive(self):
+        # No fresh body frame: republish the last POSE at the target rate so the
+        # stream (and thus engagement) stays alive instead of disengaging/freezing.
+        last = getattr(self, "_last_packed", None)
+        if last is None:
+            time.sleep(0.005)
+            return
+        if time.time() - self.frame_start < self.frame_time:
+            time.sleep(0.001)
+            return
+        self.socket.send(last)
+        self.frame_start = time.time()
+
     def run_once(self):
         """Execute one iteration of the pose streaming loop."""
         sample = self.reader.get_latest()
 
         if sample is None:
-            time.sleep(0.005)
+            self._keepalive()
             return
 
         latest_data = compute_from_body_poses(
             self.parent_indices, self.device, sample["body_poses_np"]
         )
+        if getattr(self, "_probe_frames", 0) < 5:
+            print(f"[POSEPROBE] compute ok; shape={np.asarray(sample['body_poses_np']).shape}", flush=True)
         (left_menu_button, left_trigger, right_trigger, left_grip, right_grip) = (
             get_controller_inputs()
         )
@@ -1325,6 +1344,7 @@ class PoseStreamer:
             self.next_target_ns = curr_stamp_ns
             return
         if curr_stamp_ns <= self.prev_stamp_ns:
+            self._keepalive()
             return
         if self.next_target_ns is None:
             self.next_target_ns = self.prev_stamp_ns + step_ns
@@ -1472,6 +1492,7 @@ class PoseStreamer:
 
             packed_message = pack_pose_message(numpy_data, topic="pose")
             self.socket.send(packed_message)
+            self._last_packed = packed_message
 
             if self.record_dir:
                 out_path = os.path.join(self.record_dir, f"pose_{self.record_idx:06d}.npz")
@@ -1932,7 +1953,10 @@ def run_pico_manager(
         prev_left_axis_click = False
         prev_right_axis_click = False
         prev_both_grips = False
+        import faulthandler
+        faulthandler.enable()
         while True:
+            faulthandler.dump_traceback_later(3)  # if a loop iteration hangs >3s, dump ALL thread stacks (exact stuck line)
             # Ground-truth "controller is in CONTROL": g1_debug only streams there.
             if debug_socket.poll(timeout=0):
                 debug_socket.recv(zmq.NOBLOCK)
@@ -2102,7 +2126,18 @@ def run_pico_manager(
 
             # Run one iteration of the new mode
             if new_mode == StreamMode.POSE:
-                pose_streamer.run_once()
+                _pf = getattr(pose_streamer, "_probe_frames", 0)
+                if _pf < 5:
+                    print(f"[POSEPROBE] run_once START #{_pf}", flush=True)
+                try:
+                    pose_streamer.run_once()
+                except Exception as _e:
+                    import traceback
+                    print(f"[POSEPROBE] run_once EXCEPTION #{_pf}: {_e!r}", flush=True)
+                    traceback.print_exc()
+                if _pf < 5:
+                    print(f"[POSEPROBE] run_once END #{_pf}", flush=True)
+                pose_streamer._probe_frames = _pf + 1
             elif (
                 new_mode == StreamMode.PLANNER
                 or new_mode == StreamMode.PLANNER_FROZEN_UPPER_BODY
