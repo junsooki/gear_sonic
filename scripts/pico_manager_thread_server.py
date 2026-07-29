@@ -1845,6 +1845,14 @@ def run_pico_manager(
     time.sleep(0.1)
     print(f"[Manager] ZMQ socket bound to port {port}")
 
+    # Watch the controller's g1_debug telemetry (port 5557): it is published ONLY
+    # while the controller is in CONTROL, so its arrival is the ground-truth
+    # "control is live" signal that auto_pose uses to time the PLANNER->POSE advance.
+    debug_socket = context.socket(zmq.SUB)
+    debug_socket.setsockopt_string(zmq.SUBSCRIBE, "g1_debug")
+    debug_socket.setsockopt(zmq.CONFLATE, 1)
+    debug_socket.connect("tcp://localhost:5557")
+
     # Print available locomotion modes
     try:
         print("[Manager] Available modes:")
@@ -1912,6 +1920,11 @@ def run_pico_manager(
     # Track which mode VR_3PT was entered from, so left_axis_click returns to it.
     # Will be either PLANNER or PLANNER_FROZEN_UPPER_BODY.
     vr3pt_parent_mode = StreamMode.PLANNER
+    # auto_pose engages via PLANNER first (which latches the controller's start),
+    # then advances to POSE once control is live — see the OFF/PLANNER handlers.
+    auto_pose_pending = False
+    auto_pose_since = 0.0
+    controller_in_control_t = 0.0  # last time g1_debug arrived (controller in CONTROL)
     try:
         prev_ax_pressed = False
         prev_by_pressed = False
@@ -1920,6 +1933,11 @@ def run_pico_manager(
         prev_right_axis_click = False
         prev_both_grips = False
         while True:
+            # Ground-truth "controller is in CONTROL": g1_debug only streams there.
+            if debug_socket.poll(timeout=0):
+                debug_socket.recv(zmq.NOBLOCK)
+                controller_in_control_t = time.monotonic()
+
             # Poll Pico controller for buttons/axes
             a_pressed, b_pressed, x_pressed, y_pressed = get_abxy_buttons()
 
@@ -1967,21 +1985,43 @@ def run_pico_manager(
                         print("[Manager] WARNING: No SMPL data available for calibration")
                     # POSE is the whole-body path (smpl encoder): body motion maps
                     # onto the robot.  PLANNER is sticks-only — the DWBC-like mode.
-                    # auto_pose lands on POSE after the same CALIB_FULL, so the
-                    # operator does not have to remember A+X.
+                    # auto_pose still lands on POSE, but it MUST engage via PLANNER
+                    # first: the controller only latches operator_state.start from a
+                    # PLANNER command (planner=1).  Entering POSE (streamed motion,
+                    # planner=0) straight from OFF never sets start, so the policy
+                    # stays in WAIT_FOR_CONTROL with the arms frozen at the default
+                    # pose.  Engage PLANNER, then advance to POSE once control is live.
+                    new_mode = StreamMode.PLANNER
                     if auto_pose:
-                        print("[Manager] auto_pose: engaging directly into POSE "
-                              "(full-body SMPL teleop)")
-                        new_mode = StreamMode.POSE
-                    else:
-                        new_mode = StreamMode.PLANNER
+                        auto_pose_pending = True
+                        auto_pose_since = time.monotonic()
+                        print("[Manager] auto_pose: engaging PLANNER first to latch "
+                              "control, then advancing to POSE")
 
             elif current_mode == StreamMode.PLANNER:
                 # Chain 2: POSE <--(ax)--> PLANNER <--(left_axis_click)--> VR_3PT
                 if start_combo and not prev_start_combo:
                     new_mode = StreamMode.OFF
+                    auto_pose_pending = False
+                elif auto_pose_pending and (
+                    (time.monotonic() - controller_in_control_t) < 0.5
+                    or (time.monotonic() - auto_pose_since) > 6.0
+                ):
+                    # Advance to POSE the instant the controller is confirmed in
+                    # CONTROL (g1_debug streaming) — never racing ahead of start
+                    # being latched.  The 6 s branch is a fallback for when the
+                    # g1_debug telemetry is unavailable: advance anyway rather than
+                    # hang in PLANNER.
+                    live = (time.monotonic() - controller_in_control_t) < 0.5
+                    auto_pose_pending = False
+                    print("[Manager] auto_pose: "
+                          + ("control confirmed via g1_debug" if live
+                             else "timeout fallback (no g1_debug)")
+                          + " -> advancing to POSE")
+                    new_mode = StreamMode.POSE
                 elif ax_pressed and not prev_ax_pressed:
                     new_mode = StreamMode.POSE
+                    auto_pose_pending = False
                 elif left_axis_click and not prev_left_axis_click:
                     new_mode = StreamMode.PLANNER_VR_3PT
                 elif auto_vr3pt:
