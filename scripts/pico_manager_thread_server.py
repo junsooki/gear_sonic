@@ -1990,6 +1990,14 @@ def run_pico_manager(
             if grip_reset_triggered:
                 print("[Manager] Force entering Planner Mode before resetting.")
                 new_mode = StreamMode.PLANNER
+                if auto_pose:
+                    # After the env reset, auto-advance PLANNER->POSE again (exactly
+                    # as on the initial engage) so the operator returns to whole-body
+                    # POSE.  Without this the operator is stranded in sticks-only
+                    # PLANNER, where the A+B+X+Y engage chord instead DISENGAGES
+                    # (PLANNER->OFF) -- so re-engaging took two presses through OFF.
+                    auto_pose_pending = True
+                    auto_pose_since = time.monotonic()
             if current_mode == StreamMode.OFF:
                 if start_combo and not prev_start_combo:
                     # Calibrate VR 3pt tracking NOW: operator should be in zero-ref pose.
