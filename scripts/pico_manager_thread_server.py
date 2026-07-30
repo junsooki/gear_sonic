@@ -1991,11 +1991,9 @@ def run_pico_manager(
                 print("[Manager] Force entering Planner Mode before resetting.")
                 new_mode = StreamMode.PLANNER
                 if auto_pose:
-                    # After the env reset, auto-advance PLANNER->POSE again (exactly
-                    # as on the initial engage) so the operator returns to whole-body
-                    # POSE.  Without this the operator is stranded in sticks-only
-                    # PLANNER, where the A+B+X+Y engage chord instead DISENGAGES
-                    # (PLANNER->OFF) -- so re-engaging took two presses through OFF.
+                    # Re-arm so we auto-advance PLANNER->POSE after the reset,
+                    # instead of stranding the operator in sticks-only PLANNER
+                    # (where A+B+X+Y would disengage, not re-engage).
                     auto_pose_pending = True
                     auto_pose_since = time.monotonic()
             if current_mode == StreamMode.OFF:
