@@ -23,6 +23,7 @@ class ElbowPose(Enum):
 
     LOW = "low"
     HIGH = "high"
+    DOWN = "down"
 
 
 @dataclass
@@ -284,6 +285,7 @@ class G1SupplementalInfo(RobotSupplementalInfo):
 
         # HIGH: arms raised with elbows bent (hands near shoulder height)
         # LOW: arms relaxed at sides with slight shoulder roll
+        # DOWN: arms hanging straight down (zero shoulder roll)
         if elbow_pose == ElbowPose.HIGH:
             default_joint_q = {
                 "shoulder_roll": {"left": 0.5, "right": -0.5},
@@ -292,6 +294,10 @@ class G1SupplementalInfo(RobotSupplementalInfo):
                 "wrist_roll": {"left": -0.5, "right": 0.5},
                 "wrist_yaw": {"left": 0.5, "right": -0.5},
                 "wrist_pitch": {"left": -0.2, "right": -0.2},
+            }
+        elif elbow_pose == ElbowPose.DOWN:
+            default_joint_q = {
+                "shoulder_roll": {"left": 0.0, "right": -0.0},
             }
         else:  # ElbowPose.LOW
             default_joint_q = {

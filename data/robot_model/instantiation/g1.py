@@ -15,6 +15,7 @@ from gear_sonic.data.robot_model.supplemental_info.g1.g1_supplemental_info impor
 def instantiate_g1_robot_model(
     waist_location: Literal["lower_body", "upper_body", "lower_and_upper_body"] = "lower_body",
     high_elbow_pose: bool = False,
+    elbow_pose: Literal["low", "high", "down"] | None = None,
 ):
     """
     Instantiate a G1 robot model with configurable waist location and pose.
@@ -25,6 +26,9 @@ def instantiate_g1_robot_model(
                         or "lower_and_upper_body" (waist reference from arms/manipulation
                         via IK then passed to lower body policy)
         high_elbow_pose: Whether to use high elbow pose configuration for default joint positions
+        elbow_pose: Pose name ("low", "high", "down") selecting the default arm joint
+                    positions; overrides high_elbow_pose. Defaults to the G1_ELBOW_POSE
+                    environment variable when unset.
 
     Returns:
         RobotModel: Configured G1 robot model
@@ -47,7 +51,12 @@ def instantiate_g1_robot_model(
         "lower_and_upper_body": WaistLocation.LOWER_AND_UPPER_BODY,
     }[waist_location]
 
-    elbow_pose_enum = ElbowPose.HIGH if high_elbow_pose else ElbowPose.LOW
+    if elbow_pose is None:
+        elbow_pose = os.environ.get("G1_ELBOW_POSE")
+    if elbow_pose is not None:
+        elbow_pose_enum = ElbowPose(elbow_pose.lower())
+    else:
+        elbow_pose_enum = ElbowPose.HIGH if high_elbow_pose else ElbowPose.LOW
 
     # Create single configurable supplemental info instance
     robot_model_supplemental_info = G1SupplementalInfo(
