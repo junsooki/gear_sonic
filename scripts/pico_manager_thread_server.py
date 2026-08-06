@@ -1989,14 +1989,15 @@ def run_pico_manager(
 
             new_mode = current_mode
             if grip_reset_triggered:
-                print("[Manager] Force entering Planner Mode before resetting.")
+                # Deliberately NO auto_pose re-arm here: after a scene reset the
+                # operator repositions first, then presses A+X to re-enter POSE
+                # when ready — the sim's recording gate keys off that POSE
+                # transition, so auto-advancing would start episode 2+ before
+                # the operator is in place.
+                print("[Manager] Force entering Planner Mode before resetting. "
+                      "Press A+X to re-enter POSE when ready.")
                 new_mode = StreamMode.PLANNER
-                if auto_pose:
-                    # Re-arm so we auto-advance PLANNER->POSE after the reset,
-                    # instead of stranding the operator in sticks-only PLANNER
-                    # (where A+B+X+Y would disengage, not re-engage).
-                    auto_pose_pending = True
-                    auto_pose_since = time.monotonic()
+                auto_pose_pending = False
             if current_mode == StreamMode.OFF:
                 # Engage on A+X (light chord for starting teleop); A+B+X+Y still
                 # works so the stop chord doubles as re-engage muscle memory.
@@ -2153,7 +2154,7 @@ def run_pico_manager(
                     # ENGAGED" forever with no way back short of relaunching
                     # the whole stack.  Stay in OFF instead, so the next
                     # A+B+X+Y engages again.
-                    print("[Manager] STOPPED (A+B+X+Y). Press A+B+X+Y again to re-engage.")
+                    print("[Manager] STOPPED (A+B+X+Y). Press A+X to re-engage.")
                 elif (
                     new_mode == StreamMode.PLANNER
                     or new_mode == StreamMode.PLANNER_FROZEN_UPPER_BODY
