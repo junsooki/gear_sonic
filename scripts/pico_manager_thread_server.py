@@ -1930,7 +1930,8 @@ def run_pico_manager(
     #   Global action (any mode, highest priority): left_grip + right_grip --> broadcast "ctrl/reset_env"
     #     Sim receives this and calls env.reset() to restart the episode.
     #
-    print("Manager controls: A+X=toggle mode, A+B+X+Y=start/stop policy, "
+    print("Manager controls: A+X=start teleop (from OFF) / toggle mode, "
+          "A+B+X+Y=start/stop policy, "
           "R-stick-click=drop robot, L-grip+R-grip=reset env")
     current_mode = StreamMode.OFF
     # Track which mode VR_3PT was entered from, so left_axis_click returns to it.
@@ -1997,7 +1998,12 @@ def run_pico_manager(
                     auto_pose_pending = True
                     auto_pose_since = time.monotonic()
             if current_mode == StreamMode.OFF:
-                if start_combo and not prev_start_combo:
+                # Engage on A+X (light chord for starting teleop); A+B+X+Y still
+                # works so the stop chord doubles as re-engage muscle memory.
+                engage_combo = (start_combo and not prev_start_combo) or (
+                    ax_pressed and not prev_ax_pressed
+                )
+                if engage_combo:
                     # Calibrate VR 3pt tracking NOW: operator should be in zero-ref pose.
                     # Uses the current Pico SMPL frame + FK of all-zero body joints.
                     sample = reader.get_latest()
